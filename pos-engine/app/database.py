@@ -1,34 +1,25 @@
-import os
+import os 
+from contextlib import asynccontextmanager
 import asyncpg
-from contextLib import asynccontextmanager
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:secret@localhost:5432/postgres")
+DATABASE_URL = os.getenv()
 
-db_pool: asyncpg.Pool = None
+async def init_db():
+    """ intiializes the data base by building the tables"""
+    schema_path = os.path.join(os.path.dirname(__file__), "..", "init_schema.sql")
 
-async def init_db_pool():
+    with open(schema_path, "r") as f:
+        schema_sql = f.read()
 
-    global db_pool
+    #connect to data base (postgre)
+    conn = await asyncpg.connect(DATABASE_URL)
 
-    db_pool = await asyncpg.create_pool(
-        dsn= DATABASE_URL,
-        min_size=5,
-        max_size=20
-    )
-    print("Database connection pool initialized.")
+    try:
+        #execute inside transaction to ensure the entire file executes
+        async with conn.transaction():
+            await conn.execute(schema_sql)
+            print("The data base was successfully initialized")
+    finally:
+        #close the connection
+        await conn.close()
 
-    async def close_db_pool():
-        global db_pool
-        if db_pool:
-            await db_pool.close()
-            print("Database connection pool closed.")
-
-@asynccontextmanager
-
-async def get_db_connection():
-    global db_pool
-    if db_pool is None:
-        raise RuntimeException("Data base pool is not initialized")
-
-    async with db_pool.acquire() as connection:
-        yield connection
