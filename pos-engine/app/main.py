@@ -1,19 +1,19 @@
-from fastapi import FastAPI
 from contextlib import asynccontextmanager
-from app.database import init_db
+from fastapi import FastAPI
+from app.db.database import create_db_pool, close_db_pool 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    #everything here executes before the application starts
-    print("starting pos engine...") 
-    await init_db()
-    yield 
-    # here everything executes when system shuts down
-    print("pos engine shutting down...")
+    print('Starting connection to db')
+    await create_db_pool()
 
-app = FastAPI(lifespan=lifespan)
+    yield
+    await close_db_pool()
+
+    print("shutting down the server")
+
+app = FastAPI(title="POS enterprise API", lifespan=lifespan)
 
 @app.get("/")
 async def root():
-    return{"message":"pos engine is running"}
-
+    return {"message": "POS system is now running"}
