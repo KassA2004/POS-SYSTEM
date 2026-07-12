@@ -27,7 +27,7 @@ async def close_db_pool():
         print("data base connection pool closed.")
 
 async def get_db_connection() -> AsyncGenerator[asyncpg.Connection, None]:
-    if db.pool is None:
+    if db_pool is None:
         raise Exception("Data base pool is not initialized")
 
     async with db_pool.acquire() as connection:
