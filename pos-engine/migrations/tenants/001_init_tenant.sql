@@ -1,22 +1,18 @@
--- ============================================================================
--- FILE: tenant_schema.sql
--- DESCRIPTION: The isolated blueprint for a single business's POS data.
--- NOTE: All tenant_id columns have been strictly removed for schema-level isolation.
--- ============================================================================
+-- Isolated tenant schema initial migration blueprint
 
 -- 1. BASE ENTITIES (No dependencies)
-CREATE TABLE roles (
+CREATE TABLE IF NOT EXISTS roles (
     id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name VARCHAR(100) NOT NULL
 );
 
-CREATE TABLE permissions (
+CREATE TABLE IF NOT EXISTS permissions (
     id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     code VARCHAR(100) NOT NULL UNIQUE,
     description TEXT
 );
 
-CREATE TABLE branches (
+CREATE TABLE IF NOT EXISTS branches (
     id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     address TEXT NOT NULL,
@@ -24,7 +20,7 @@ CREATE TABLE branches (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
-CREATE TABLE employees (
+CREATE TABLE IF NOT EXISTS employees (
     id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     date_of_birth DATE,
@@ -32,7 +28,7 @@ CREATE TABLE employees (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
-CREATE TABLE warehouse_items (
+CREATE TABLE IF NOT EXISTS warehouse_items (
     id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     sku VARCHAR(100) UNIQUE,
@@ -42,13 +38,13 @@ CREATE TABLE warehouse_items (
 
 
 -- 2. MAPPING & RELATIONSHIP TABLES
-CREATE TABLE role_permissions (
+CREATE TABLE IF NOT EXISTS role_permissions (
     role_id INT REFERENCES roles(id) ON DELETE CASCADE,
     permission_id INT REFERENCES permissions(id) ON DELETE CASCADE,
     PRIMARY KEY (role_id, permission_id)
 );
 
-CREATE TABLE branch_employees (
+CREATE TABLE IF NOT EXISTS branch_employees (
     id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     employee_id INT REFERENCES employees(id) ON DELETE CASCADE NOT NULL,
     branch_id INT REFERENCES branches(id) ON DELETE CASCADE NOT NULL,
@@ -59,12 +55,12 @@ CREATE TABLE branch_employees (
 
 
 -- 3. INVENTORY & PRODUCTS
-CREATE TABLE inventory_warehouse (
+CREATE TABLE IF NOT EXISTS inventory_warehouse (
     warehouse_item_id INT PRIMARY KEY REFERENCES warehouse_items(id) ON DELETE CASCADE,
     quantity NUMERIC(12, 3) DEFAULT 0 NOT NULL
 );
 
-CREATE TABLE products (
+CREATE TABLE IF NOT EXISTS products (
     id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     price NUMERIC(12, 2) NOT NULL,
@@ -74,7 +70,7 @@ CREATE TABLE products (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
-CREATE TABLE product_recipes (
+CREATE TABLE IF NOT EXISTS product_recipes (
     id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     product_id INT REFERENCES products(id) ON DELETE CASCADE NOT NULL,
     warehouse_item_id INT REFERENCES warehouse_items(id) ON DELETE CASCADE NOT NULL,
@@ -84,7 +80,7 @@ CREATE TABLE product_recipes (
 
 
 -- 4. OPERATIONS (Shifts & Orders)
-CREATE TABLE shifts (
+CREATE TABLE IF NOT EXISTS shifts (
     id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     employee_id INT REFERENCES employees(id) ON DELETE RESTRICT NOT NULL,
     branch_id INT REFERENCES branches(id) ON DELETE RESTRICT NOT NULL,
@@ -94,7 +90,7 @@ CREATE TABLE shifts (
     closing_cash NUMERIC(12, 2)
 );
 
-CREATE TABLE orders (
+CREATE TABLE IF NOT EXISTS orders (
     id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     branch_id INT REFERENCES branches(id) ON DELETE RESTRICT NOT NULL,
     employee_id INT REFERENCES employees(id) ON DELETE RESTRICT NOT NULL,
@@ -105,7 +101,7 @@ CREATE TABLE orders (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
-CREATE TABLE order_line_items (
+CREATE TABLE IF NOT EXISTS order_line_items (
     id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     order_id INT REFERENCES orders(id) ON DELETE CASCADE NOT NULL,
     product_id INT REFERENCES products(id) ON DELETE RESTRICT NOT NULL,
@@ -114,7 +110,7 @@ CREATE TABLE order_line_items (
     subtotal_price NUMERIC(12, 2) NOT NULL
 );
 
-CREATE TABLE payments (
+CREATE TABLE IF NOT EXISTS payments (
     id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     order_id INT REFERENCES orders(id) ON DELETE CASCADE NOT NULL,
     amount NUMERIC(12, 2) NOT NULL,
@@ -124,7 +120,7 @@ CREATE TABLE payments (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
-CREATE TABLE inventory_transactions (
+CREATE TABLE IF NOT EXISTS inventory_transactions (
     id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     warehouse_item_id INT REFERENCES warehouse_items(id) ON DELETE RESTRICT NOT NULL,
     employee_id INT REFERENCES employees(id) ON DELETE RESTRICT NOT NULL,
@@ -137,7 +133,7 @@ CREATE TABLE inventory_transactions (
 
 
 -- 5. AUDITING
-CREATE TABLE audit_logs (
+CREATE TABLE IF NOT EXISTS audit_logs (
     id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     employee_id INT REFERENCES employees(id) ON DELETE SET NULL,
     table_name VARCHAR(100) NOT NULL,

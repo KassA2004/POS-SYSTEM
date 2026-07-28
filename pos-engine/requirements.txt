@@ -2,4 +2,7 @@ fastapi
 uvicorn[standard]
 asyncpg
 pydantic[email]
-bycrypt
+bcrypt
+stripe
+PyJWT
+python-multipart
