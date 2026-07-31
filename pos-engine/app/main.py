@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from app.db.database import create_db_pool, close_db_pool 
-from app.api.cloud import auth, tenants
+from app.api.cloud import auth, tenants, branches, employees, roles, branch_employees, warehouse_items, products
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -17,6 +17,12 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="POS enterprise API", lifespan=lifespan)
 app.include_router(auth.router)
 app.include_router(tenants.router)
+app.include_router(branches.router)
+app.include_router(employees.router)
+app.include_router(roles.router)
+app.include_router(branch_employees.router)
+app.include_router(warehouse_items.router)
+app.include_router(products.router)
 
 @app.get("/")
 async def root():

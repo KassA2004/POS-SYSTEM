@@ -3,9 +3,9 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, Request, Header
 from app.models.auth_schemas import TenantRegistrationRequest, TenantRegistrationResponse
 from app.db.database import get_db_connection
+from app.services.auth_services import register_tenant_service
 from app.services.tenant_service import activate_tenant_and_create_schema
-from app.services.stripe_service import create_checkout_session, construct_event
-from app.core.security import hash_password
+from app.services.stripe_service import construct_event
 import asyncpg
 
 router = APIRouter()
@@ -16,63 +16,7 @@ async def register_tenant(
     request: TenantRegistrationRequest,
     conn: asyncpg.Connection = Depends(get_db_connection),
 ):
-    clean_schema_name = "schema_" + request.company_name.lower().replace(" ", "_").replace("-", "_")
-    hashed_pw = hash_password(request.password)
-
-    try:
-        # Insert tenant with state = 0 (pending)
-        tenant_query = """
-            INSERT INTO tenants (name, schema_name, state)
-            VALUES ($1, $2, 0)
-            RETURNING id;
-        """
-        tenant_record = await conn.fetchrow(
-            tenant_query, request.company_name, clean_schema_name
-        )
-        new_tenant_id = tenant_record["id"]
-
-        # Insert tenant owner
-        user_query = """
-            INSERT INTO users (tenant_id, email, password_hash, role)
-            VALUES ($1, $2, $3, 'TENANT_OWNER');
-        """
-        await conn.execute(user_query, new_tenant_id, request.email, hashed_pw)
-
-        # Create Stripe Checkout Session
-        stripe_session = create_checkout_session(
-            tenant_id=new_tenant_id,
-            company_name=request.company_name,
-            email=request.email,
-        )
-
-        session_id = stripe_session["session_id"]
-        checkout_url = stripe_session["checkout_url"]
-
-        # Update tenant record with payment_session_id
-        await conn.execute(
-            "UPDATE tenants SET payment_session_id = $1 WHERE id = $2;",
-            session_id,
-            new_tenant_id,
-        )
-
-        # Note: CREATE SCHEMA is intentionally NOT run here. It will run upon successful payment.
-
-        return TenantRegistrationResponse(
-            tenant_id=new_tenant_id,
-            company_name=request.company_name,
-            schema_name=clean_schema_name,
-            state=0,
-            checkout_url=checkout_url,
-            session_id=session_id,
-            message="Registration pending payment. Please complete payment via Stripe to activate tenant schema.",
-        )
-
-    except asyncpg.exceptions.UniqueViolationError:
-        raise HTTPException(
-            status_code=400, detail="This email or business name is already registered."
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return await register_tenant_service(conn, request)
 
 
 @router.post("/stripe-webhook")
