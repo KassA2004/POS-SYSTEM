@@ -29,6 +29,7 @@ CREATE TABLE employees (
     name VARCHAR(255) NOT NULL,
     date_of_birth DATE,
     phone VARCHAR(50),
+    pin_hash VARCHAR(255),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
@@ -92,6 +93,16 @@ CREATE TABLE shifts (
     closed_at TIMESTAMP WITH TIME ZONE,
     opening_cash NUMERIC(12, 2) NOT NULL,
     closing_cash NUMERIC(12, 2)
+);
+
+CREATE TABLE cash_transactions (
+    id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    shift_id INT REFERENCES shifts(id) ON DELETE CASCADE NOT NULL,
+    employee_id INT REFERENCES employees(id) ON DELETE RESTRICT NOT NULL,
+    amount NUMERIC(12, 2) NOT NULL,
+    transaction_type VARCHAR(50) NOT NULL CHECK (transaction_type IN ('PAY_IN', 'PAY_OUT')),
+    reason TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
 CREATE TABLE orders (

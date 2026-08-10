@@ -1,5 +1,8 @@
-import asyncpg
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
+from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException, status
+from app.db.models.tenant_models import ProductRecipe, Product, WarehouseItem
 from app.models.product_recipe_schemas import (
     ProductRecipeCreate,
     ProductRecipeUpdate,
@@ -9,7 +12,7 @@ from app.models.product_recipe_schemas import (
 
 
 async def create_product_recipe_service(
-    conn: asyncpg.Connection,
+    db: AsyncSession,
     product_id: int,
     data: ProductRecipeCreate,
 ) -> ProductRecipeResponse:
@@ -17,7 +20,8 @@ async def create_product_recipe_service(
     Adds a new recipe ingredient to a product and ensures product is flagged as a recipe.
     """
     # 1. Verify parent product exists
-    product = await conn.fetchrow("SELECT id FROM products WHERE id = $1;", product_id)
+    product_result = await db.execute(select(Product).where(Product.id == product_id))
+    product = product_result.scalar_one_or_none()
     if not product:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -25,26 +29,37 @@ async def create_product_recipe_service(
         )
 
     # 2. Verify warehouse item exists
-    item = await conn.fetchrow("SELECT id FROM warehouse_items WHERE id = $1;", data.warehouse_item_id)
-    if not item:
+    item_result = await db.execute(
+        select(WarehouseItem.id).where(WarehouseItem.id == data.warehouse_item_id)
+    )
+    if not item_result.first():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Warehouse item with ID {data.warehouse_item_id} not found.",
         )
 
-    query = """
-        INSERT INTO product_recipes (product_id, warehouse_item_id, quantity_required)
-        VALUES ($1, $2, $3)
-        RETURNING id, product_id, warehouse_item_id, quantity_required;
-    """
-    try:
-        row = await conn.fetchrow(query, product_id, data.warehouse_item_id, data.quantity_required)
-        
-        # Flag product as a recipe if not already
-        await conn.execute("UPDATE products SET is_recipe = TRUE WHERE id = $1;", product_id)
+    new_recipe = ProductRecipe(
+        product_id=product_id,
+        warehouse_item_id=data.warehouse_item_id,
+        quantity_required=data.quantity_required,
+    )
+    db.add(new_recipe)
 
-        return ProductRecipeResponse(**dict(row))
-    except asyncpg.exceptions.UniqueViolationError:
+    try:
+        await db.flush()
+
+        # Flag product as a recipe if not already
+        if not product.is_recipe:
+            product.is_recipe = True
+
+        await db.refresh(new_recipe)
+        return ProductRecipeResponse(
+            id=new_recipe.id,
+            product_id=new_recipe.product_id,
+            warehouse_item_id=new_recipe.warehouse_item_id,
+            quantity_required=new_recipe.quantity_required,
+        )
+    except IntegrityError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Recipe ingredient for warehouse item ID {data.warehouse_item_id} already exists for product {product_id}.",
@@ -57,7 +72,7 @@ async def create_product_recipe_service(
 
 
 async def update_product_recipe_service(
-    conn: asyncpg.Connection,
+    db: AsyncSession,
     product_id: int,
     recipe_id: int,
     data: ProductRecipeUpdate,
@@ -65,12 +80,15 @@ async def update_product_recipe_service(
     """
     Updates an existing product recipe ingredient record.
     """
-    existing = await conn.fetchrow(
-        "SELECT id FROM product_recipes WHERE id = $1 AND product_id = $2;",
-        recipe_id,
-        product_id,
+    result = await db.execute(
+        select(ProductRecipe).where(
+            ProductRecipe.id == recipe_id,
+            ProductRecipe.product_id == product_id,
+        )
     )
-    if not existing:
+    recipe = result.scalar_one_or_none()
+
+    if not recipe:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Recipe entry with ID {recipe_id} for product {product_id} not found.",
@@ -78,44 +96,36 @@ async def update_product_recipe_service(
 
     update_data = data.model_dump(exclude_unset=True)
     if not update_data:
-        row = await conn.fetchrow(
-            "SELECT id, product_id, warehouse_item_id, quantity_required FROM product_recipes WHERE id = $1;",
-            recipe_id,
+        return ProductRecipeResponse(
+            id=recipe.id,
+            product_id=recipe.product_id,
+            warehouse_item_id=recipe.warehouse_item_id,
+            quantity_required=recipe.quantity_required,
         )
-        return ProductRecipeResponse(**dict(row))
 
     if "warehouse_item_id" in update_data and update_data["warehouse_item_id"] is not None:
-        item = await conn.fetchrow(
-            "SELECT id FROM warehouse_items WHERE id = $1;",
-            update_data["warehouse_item_id"],
+        item_result = await db.execute(
+            select(WarehouseItem.id).where(WarehouseItem.id == update_data["warehouse_item_id"])
         )
-        if not item:
+        if not item_result.first():
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Warehouse item with ID {update_data['warehouse_item_id']} not found.",
             )
 
-    set_clauses = []
-    values = []
-    idx = 1
-    for field, val in update_data.items():
-        set_clauses.append(f"{field} = ${idx}")
-        values.append(val)
-        idx += 1
-
-    values.append(recipe_id)
-    values.append(product_id)
-    query = f"""
-        UPDATE product_recipes
-        SET {', '.join(set_clauses)}
-        WHERE id = ${idx} AND product_id = ${idx + 1}
-        RETURNING id, product_id, warehouse_item_id, quantity_required;
-    """
+    for field, value in update_data.items():
+        setattr(recipe, field, value)
 
     try:
-        row = await conn.fetchrow(query, *values)
-        return ProductRecipeResponse(**dict(row))
-    except asyncpg.exceptions.UniqueViolationError:
+        await db.flush()
+        await db.refresh(recipe)
+        return ProductRecipeResponse(
+            id=recipe.id,
+            product_id=recipe.product_id,
+            warehouse_item_id=recipe.warehouse_item_id,
+            quantity_required=recipe.quantity_required,
+        )
+    except IntegrityError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="A recipe ingredient with this warehouse item already exists for this product.",
@@ -128,34 +138,43 @@ async def update_product_recipe_service(
 
 
 async def delete_product_recipe_service(
-    conn: asyncpg.Connection,
+    db: AsyncSession,
     product_id: int,
     recipe_id: int,
 ) -> ProductRecipeDeleteResponse:
     """
     Deletes a product recipe ingredient record.
+    If no recipes remain, resets is_recipe flag to False on the parent product.
     """
-    existing = await conn.fetchrow(
-        "SELECT id FROM product_recipes WHERE id = $1 AND product_id = $2;",
-        recipe_id,
-        product_id,
+    result = await db.execute(
+        select(ProductRecipe).where(
+            ProductRecipe.id == recipe_id,
+            ProductRecipe.product_id == product_id,
+        )
     )
-    if not existing:
+    recipe = result.scalar_one_or_none()
+
+    if not recipe:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Recipe entry with ID {recipe_id} for product {product_id} not found.",
         )
 
     try:
-        await conn.execute("DELETE FROM product_recipes WHERE id = $1;", recipe_id)
-        
-        # If no recipes remain for product, reset is_recipe flag to FALSE
-        remaining = await conn.fetchval(
-            "SELECT COUNT(*) FROM product_recipes WHERE product_id = $1;",
-            product_id,
+        await db.delete(recipe)
+        await db.flush()
+
+        # Count remaining recipes for this product
+        count_result = await db.execute(
+            select(func.count()).where(ProductRecipe.product_id == product_id)
         )
+        remaining = count_result.scalar()
+
         if remaining == 0:
-            await conn.execute("UPDATE products SET is_recipe = FALSE WHERE id = $1;", product_id)
+            product_result = await db.execute(select(Product).where(Product.id == product_id))
+            product = product_result.scalar_one_or_none()
+            if product:
+                product.is_recipe = False
 
         return ProductRecipeDeleteResponse(
             message=f"Recipe entry {recipe_id} for product {product_id} deleted successfully.",

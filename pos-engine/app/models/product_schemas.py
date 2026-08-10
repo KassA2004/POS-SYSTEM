@@ -1,7 +1,8 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import List, Optional
 from decimal import Decimal
 from datetime import datetime
+from app.models.product_recipe_schemas import ProductRecipeResponse
 
 
 class ProductCreate(BaseModel):
@@ -31,6 +32,11 @@ class ProductResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class ProductDetailResponse(ProductResponse):
+    recipes: List[ProductRecipeResponse] = []
+
 
 
 class ProductDeleteResponse(BaseModel):

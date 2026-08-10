@@ -1,12 +1,12 @@
 import os
 import json
 from fastapi import APIRouter, Depends, HTTPException, Request, Header
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.auth_schemas import TenantRegistrationRequest, TenantRegistrationResponse
-from app.db.database import get_db_connection
+from app.db.database import get_db
 from app.services.auth_services import register_tenant_service
 from app.services.tenant_service import activate_tenant_and_create_schema
 from app.services.stripe_service import construct_event
-import asyncpg
 
 router = APIRouter()
 
@@ -14,16 +14,16 @@ router = APIRouter()
 @router.post("/register", response_model=TenantRegistrationResponse)
 async def register_tenant(
     request: TenantRegistrationRequest,
-    conn: asyncpg.Connection = Depends(get_db_connection),
+    db: AsyncSession = Depends(get_db),
 ):
-    return await register_tenant_service(conn, request)
+    return await register_tenant_service(db, request)
 
 
 @router.post("/stripe-webhook")
 async def stripe_webhook(
     request: Request,
     stripe_signature: str = Header(None, alias="stripe-signature"),
-    conn: asyncpg.Connection = Depends(get_db_connection),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Stripe Webhook handler:
@@ -39,7 +39,6 @@ async def stripe_webhook(
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Webhook signature verification failed: {e}")
     else:
-        # Fallback to parsing raw payload JSON when secret isn't configured in test/dev
         try:
             event = json.loads(payload.decode("utf-8"))
         except Exception as e:
@@ -55,7 +54,7 @@ async def stripe_webhook(
         tenant_id = int(client_ref_id) if client_ref_id and client_ref_id.isdigit() else None
 
         try:
-            res = await activate_tenant_and_create_schema(conn, tenant_id=tenant_id, session_id=session_id)
+            res = await activate_tenant_and_create_schema(db, tenant_id=tenant_id, session_id=session_id)
             return {"status": "success", "tenant": res}
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to activate tenant schema: {e}")
@@ -67,14 +66,14 @@ async def stripe_webhook(
 @router.get("/payment-success")
 async def verify_payment(
     session_id: str,
-    conn: asyncpg.Connection = Depends(get_db_connection),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Verifies payment and activates tenant / creates schema for a given Stripe session ID.
     Enables instant activation verification in test environments.
     """
     try:
-        result = await activate_tenant_and_create_schema(conn, session_id=session_id)
+        result = await activate_tenant_and_create_schema(db, session_id=session_id)
         return {
             "status": "success",
             "message": "Payment verified. Tenant schema created and state updated to active (1).",

@@ -6,3 +6,5 @@ bcrypt
 stripe
 PyJWT
 python-multipart
+sqlalchemy
+psycopg2-binary

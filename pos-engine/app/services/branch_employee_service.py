@@ -1,5 +1,7 @@
-import asyncpg
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
 from fastapi import HTTPException, status
+from app.db.models.tenant_models import BranchEmployee, Branch, Employee, Role
 from app.models.branch_employee_schemas import (
     BranchEmployeeAssignRequest,
     BranchEmployeeUpdateRequest,
@@ -9,35 +11,52 @@ from app.models.branch_employee_schemas import (
 
 
 async def get_branch_employee_by_id(
-    conn: asyncpg.Connection,
+    db: AsyncSession,
     assignment_id: int,
 ) -> BranchEmployeeResponse:
     """
-    Helper function to query and enrich a branch employee mapping record.
+    Helper that queries a branch_employee row and joins employee/branch/role names.
     """
-    query = """
-        SELECT 
-            be.id, be.employee_id, be.branch_id, be.role_id, be.assigned_at, be.removed_at,
-            e.name AS employee_name,
-            b.name AS branch_name,
-            r.name AS role_name
-        FROM branch_employees be
-        JOIN employees e ON be.employee_id = e.id
-        JOIN branches b ON be.branch_id = b.id
-        LEFT JOIN roles r ON be.role_id = r.id
-        WHERE be.id = $1;
-    """
-    row = await conn.fetchrow(query, assignment_id)
+    result = await db.execute(
+        select(
+            BranchEmployee.id,
+            BranchEmployee.employee_id,
+            BranchEmployee.branch_id,
+            BranchEmployee.role_id,
+            BranchEmployee.assigned_at,
+            BranchEmployee.removed_at,
+            Employee.name.label("employee_name"),
+            Branch.name.label("branch_name"),
+            Role.name.label("role_name"),
+        )
+        .join(Employee, BranchEmployee.employee_id == Employee.id)
+        .join(Branch, BranchEmployee.branch_id == Branch.id)
+        .outerjoin(Role, BranchEmployee.role_id == Role.id)
+        .where(BranchEmployee.id == assignment_id)
+    )
+    row = result.first()
+
     if not row:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Branch employee assignment with ID {assignment_id} not found.",
         )
-    return BranchEmployeeResponse(**dict(row))
+
+    return BranchEmployeeResponse(
+        id=row.id,
+        employee_id=row.employee_id,
+        branch_id=row.branch_id,
+        role_id=row.role_id,
+        assigned_at=row.assigned_at,
+        removed_at=row.removed_at,
+        employee_name=row.employee_name,
+        branch_name=row.branch_name,
+        role_name=row.role_name,
+    )
 
 
 async def assign_employee_to_branch_service(
-    conn: asyncpg.Connection,
+    db: AsyncSession,
     branch_id: int,
     data: BranchEmployeeAssignRequest,
 ) -> BranchEmployeeResponse:
@@ -46,69 +65,59 @@ async def assign_employee_to_branch_service(
     Prevents active duplicate assignment of the same employee to the same branch.
     """
     # 1. Verify branch existence
-    branch = await conn.fetchrow("SELECT id FROM branches WHERE id = $1;", branch_id)
-    if not branch:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Branch with ID {branch_id} not found.",
-        )
+    branch_result = await db.execute(select(Branch.id).where(Branch.id == branch_id))
+    if not branch_result.first():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Branch with ID {branch_id} not found.")
 
     # 2. Verify employee existence
-    employee = await conn.fetchrow("SELECT id FROM employees WHERE id = $1;", data.employee_id)
-    if not employee:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Employee with ID {data.employee_id} not found.",
-        )
+    employee_result = await db.execute(select(Employee.id).where(Employee.id == data.employee_id))
+    if not employee_result.first():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Employee with ID {data.employee_id} not found.")
 
     # 3. Verify role existence (if provided)
     if data.role_id is not None:
-        role = await conn.fetchrow("SELECT id FROM roles WHERE id = $1;", data.role_id)
-        if not role:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Role with ID {data.role_id} not found.",
-            )
+        role_result = await db.execute(select(Role.id).where(Role.id == data.role_id))
+        if not role_result.first():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Role with ID {data.role_id} not found.")
 
     # 4. Check for active duplicate assignment
-    existing_active = await conn.fetchrow(
-        "SELECT id FROM branch_employees WHERE employee_id = $1 AND branch_id = $2 AND removed_at IS NULL;",
-        data.employee_id,
-        branch_id,
+    active_result = await db.execute(
+        select(BranchEmployee.id).where(
+            BranchEmployee.employee_id == data.employee_id,
+            BranchEmployee.branch_id == branch_id,
+            BranchEmployee.removed_at.is_(None),
+        )
     )
-    if existing_active:
+    if active_result.first():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Employee {data.employee_id} is already actively assigned to branch {branch_id}.",
         )
 
     # 5. Insert new assignment
-    insert_query = """
-        INSERT INTO branch_employees (employee_id, branch_id, role_id, assigned_at)
-        VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
-        RETURNING id;
-    """
-    row = await conn.fetchrow(insert_query, data.employee_id, branch_id, data.role_id)
-    new_id = row["id"]
+    new_assignment = BranchEmployee(
+        employee_id=data.employee_id,
+        branch_id=branch_id,
+        role_id=data.role_id,
+    )
+    db.add(new_assignment)
+    await db.flush()
 
-    # 6. Return enriched assignment
-    return await get_branch_employee_by_id(conn, new_id)
+    return await get_branch_employee_by_id(db, new_assignment.id)
 
 
 async def update_branch_employee_service(
-    conn: asyncpg.Connection,
+    db: AsyncSession,
     assignment_id: int,
     data: BranchEmployeeUpdateRequest,
 ) -> BranchEmployeeResponse:
     """
     Updates an assignment record (e.g. promoting/changing role_id or branch_id).
     """
-    # 1. Verify existence
-    existing = await conn.fetchrow(
-        "SELECT id, employee_id, branch_id, role_id FROM branch_employees WHERE id = $1;",
-        assignment_id,
-    )
-    if not existing:
+    result = await db.execute(select(BranchEmployee).where(BranchEmployee.id == assignment_id))
+    assignment = result.scalar_one_or_none()
+
+    if not assignment:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Branch employee assignment with ID {assignment_id} not found.",
@@ -120,72 +129,55 @@ async def update_branch_employee_service(
             detail="At least one field (role_id or branch_id) must be provided for update.",
         )
 
-    # 2. Verify new branch if provided
+    # Verify new branch if provided
     if data.branch_id is not None:
-        branch = await conn.fetchrow("SELECT id FROM branches WHERE id = $1;", data.branch_id)
-        if not branch:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Branch with ID {data.branch_id} not found.",
-            )
+        branch_result = await db.execute(select(Branch.id).where(Branch.id == data.branch_id))
+        if not branch_result.first():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Branch with ID {data.branch_id} not found.")
+        assignment.branch_id = data.branch_id
 
-    # 3. Verify new role if provided
+    # Verify new role if provided
     if data.role_id is not None:
-        role = await conn.fetchrow("SELECT id FROM roles WHERE id = $1;", data.role_id)
-        if not role:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Role with ID {data.role_id} not found.",
-            )
+        role_result = await db.execute(select(Role.id).where(Role.id == data.role_id))
+        if not role_result.first():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Role with ID {data.role_id} not found.")
+        assignment.role_id = data.role_id
 
-    # 4. Perform update
-    update_query = """
-        UPDATE branch_employees
-        SET role_id = COALESCE($1, role_id),
-            branch_id = COALESCE($2, branch_id)
-        WHERE id = $3;
-    """
-    await conn.execute(update_query, data.role_id, data.branch_id, assignment_id)
+    await db.flush()
 
-    # 5. Return enriched updated assignment
-    return await get_branch_employee_by_id(conn, assignment_id)
+    return await get_branch_employee_by_id(db, assignment_id)
 
 
 async def delete_branch_employee_service(
-    conn: asyncpg.Connection,
+    db: AsyncSession,
     assignment_id: int,
 ) -> BranchEmployeeDeleteResponse:
     """
-    Removes an employee from a branch by setting removed_at timestamp.
+    Removes an employee from a branch by setting removed_at timestamp (soft-delete).
     """
-    # 1. Verify existence
-    existing = await conn.fetchrow(
-        "SELECT id, removed_at FROM branch_employees WHERE id = $1;",
-        assignment_id,
-    )
-    if not existing:
+    result = await db.execute(select(BranchEmployee).where(BranchEmployee.id == assignment_id))
+    assignment = result.scalar_one_or_none()
+
+    if not assignment:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Branch employee assignment with ID {assignment_id} not found.",
         )
 
-    if existing["removed_at"] is not None:
+    if assignment.removed_at is not None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Branch employee assignment {assignment_id} has already been removed.",
         )
 
-    # 2. Soft-remove by setting removed_at timestamp
-    update_query = """
-        UPDATE branch_employees
-        SET removed_at = CURRENT_TIMESTAMP
-        WHERE id = $1
-        RETURNING removed_at;
-    """
-    row = await conn.fetchrow(update_query, assignment_id)
+    # Soft-remove: stamp removed_at with the database's current timestamp
+    from sqlalchemy import func
+    assignment.removed_at = func.now()
+    await db.flush()
+    await db.refresh(assignment)
 
     return BranchEmployeeDeleteResponse(
         message=f"Employee assignment {assignment_id} successfully removed from branch.",
         id=assignment_id,
-        removed_at=row["removed_at"],
+        removed_at=assignment.removed_at,
     )
