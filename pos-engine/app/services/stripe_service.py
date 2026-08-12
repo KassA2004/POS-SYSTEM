@@ -11,11 +11,11 @@ def create_checkout_session(tenant_id: int, company_name: str, email: str) -> di
     """
     success_url = os.getenv(
         "STRIPE_SUCCESS_URL",
-        "http://localhost:8000/auth/payment-success?session_id={CHECKOUT_SESSION_ID}"
+        "http://localhost:5173/payment-success?session_id={CHECKOUT_SESSION_ID}"
     )
     cancel_url = os.getenv(
         "STRIPE_CANCEL_URL",
-        "http://localhost:8000/auth/payment-cancelled"
+        "http://localhost:5173/register"
     )
 
     try:

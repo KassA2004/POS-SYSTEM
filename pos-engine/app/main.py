@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from app.db.database import create_db_pool, close_db_pool 
 from app.api.cloud import auth, tenants, branches, employees, roles, branch_employees, warehouse_items, products, reports
 
@@ -20,6 +21,20 @@ async def lifespan(app: FastAPI):
     print("shutting down the server")
 
 app = FastAPI(title="POS enterprise API", lifespan=lifespan)
+
+# CORS — allow requests from the React Cloud Dashboard frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",  # Vite default dev server
+        "http://localhost:4173",  # Vite preview
+        "http://127.0.0.1:5173",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(auth.router)
 app.include_router(tenants.router)
 app.include_router(branches.router)

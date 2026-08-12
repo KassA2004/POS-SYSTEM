@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 from fastapi import HTTPException, status
-from app.db.models.cloud_models import Tenant, User
+from app.db.models.cloud_models import Tenant, User, CloudRole
 from app.models.auth_schemas import TenantRegistrationRequest, TenantRegistrationResponse, Token
 from app.core.security import hash_password, verify_password, create_access_token
 from app.services.stripe_service import create_checkout_session
@@ -33,7 +33,7 @@ async def register_tenant_service(
             tenant_id=new_tenant.id,
             email=request.email,
             password_hash=hashed_pw,
-            role="TENANT_OWNER",
+            role=CloudRole.TENANT_OWNER,
         )
         db.add(new_user)
         await db.flush()
@@ -104,6 +104,12 @@ async def authenticate_user_service(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if row.tenant_state != 1:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Payment not completed. Please finish checkout to activate your account.",
         )
 
     token_data = {

@@ -3,6 +3,7 @@ cloud_models.py
 ORM models for the PUBLIC schema tables: tenants + users.
 These are the global, cross-tenant tables that exist outside any tenant schema.
 """
+import enum
 from sqlalchemy import (
     Column,
     Integer,
@@ -10,9 +11,22 @@ from sqlalchemy import (
     SmallInteger,
     TIMESTAMP,
     ForeignKey,
+    Enum,
     func,
 )
 from app.db.database import Base
+
+
+class CloudRole(str, enum.Enum):
+    """Mirrors the `cloud_role` PostgreSQL enum defined in init_schema.sql."""
+    SUPER_ADMIN = "SUPER_ADMIN"
+    TENANT_OWNER = "TENANT_OWNER"
+    TENANT_ADMIN = "TENANT_ADMIN"
+    ACCOUNTANT = "ACCOUNTANT"
+    OPERATIONS_MANAGER = "OPERATIONS_MANAGER"
+    MARKETING_MANAGER = "MARKETING_MANAGER"
+    ANALYST = "ANALYST"
+    VIEWER = "VIEWER"
 
 
 class Tenant(Base):
@@ -36,6 +50,15 @@ class User(Base):
     tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
     email = Column(String(255), nullable=False, unique=True)
     password_hash = Column(String(255), nullable=False)
-    # e.g. 'TENANT_OWNER', 'SUPER_ADMIN'
-    role = Column(String(50), nullable=False, default="TENANT_OWNER")
+    # Uses the existing `cloud_role` PostgreSQL enum — create_type=False prevents
+    # SQLAlchemy from trying to CREATE TYPE (it already exists in the DB).
+    role = Column(
+        Enum(
+            CloudRole,
+            name="cloud_role",
+            create_type=False,
+        ),
+        nullable=False,
+        default=CloudRole.TENANT_OWNER,
+    )
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)

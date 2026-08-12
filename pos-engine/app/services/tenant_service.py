@@ -28,8 +28,12 @@ async def provision_tenant_schema(db: AsyncSession, schema_name: str):
         # Route this connection to the new tenant schema
         await db.execute(text(f"SET search_path TO {schema_name}"))
 
-        # Run the DDL script to build all tenant tables
-        await db.execute(text(schema_sql))
+        # asyncpg's prepared-statement protocol only allows a single command per
+        # execute(), so the multi-statement DDL script must be split and run
+        # statement-by-statement rather than as one text() call.
+        statements = [stmt.strip() for stmt in schema_sql.split(";") if stmt.strip()]
+        for statement in statements:
+            await db.execute(text(statement))
 
         # Create migration tracking table and record the initial blueprint
         await db.execute(text(f"""
