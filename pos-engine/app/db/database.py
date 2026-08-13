@@ -59,8 +59,10 @@ async def get_tenant_db(schema_name: str) -> AsyncGenerator[AsyncSession, None]:
                 yield session
     """
     async with AsyncSessionLocal() as session:
-        # Route this session to the tenant's isolated schema
-        await session.execute(text(f"SET search_path TO {schema_name}"))
+        # Route this session to the tenant's isolated schema.
+        # SET LOCAL keeps the change scoped to this transaction so the setting
+        # cannot leak back into the connection pool - see get_scoped_db.
+        await session.execute(text(f"SET LOCAL search_path TO {schema_name}"))
         try:
             yield session
             await session.commit()

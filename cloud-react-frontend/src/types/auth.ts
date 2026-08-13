@@ -4,6 +4,7 @@ export interface User {
   role: string;
   tenant_id: number;
   schema_name: string;
+  tenant_name?: string | null;
 }
 
 export interface TenantRegistrationRequest {

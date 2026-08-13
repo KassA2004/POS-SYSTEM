@@ -12,6 +12,90 @@ from sqlalchemy import select, update, text
 from app.db.models.cloud_models import Tenant
 
 
+def split_sql_statements(script: str) -> list[str]:
+    """
+    Splits a SQL script into individual statements.
+
+    A plain `script.split(";")` is not safe here: the schema file contains `--`
+    comments and quoted string literals (permission descriptions), and a
+    semicolon inside either of those would produce invalid fragments. This walks
+    the script character by character, tracking whether it is inside a line
+    comment, a block comment or a single-quoted literal, and only treats a
+    semicolon as a separator when it is in none of them.
+    """
+    statements: list[str] = []
+    buffer: list[str] = []
+    in_line_comment = False
+    in_block_comment = False
+    in_string = False
+    i = 0
+    length = len(script)
+
+    while i < length:
+        char = script[i]
+        nxt = script[i + 1] if i + 1 < length else ""
+
+        if in_line_comment:
+            if char == "\n":
+                in_line_comment = False
+                buffer.append(char)
+            i += 1
+            continue
+
+        if in_block_comment:
+            if char == "*" and nxt == "/":
+                in_block_comment = False
+                i += 2
+                continue
+            i += 1
+            continue
+
+        if in_string:
+            buffer.append(char)
+            if char == "'":
+                # '' is an escaped quote inside a literal, not a terminator.
+                if nxt == "'":
+                    buffer.append(nxt)
+                    i += 2
+                    continue
+                in_string = False
+            i += 1
+            continue
+
+        if char == "-" and nxt == "-":
+            in_line_comment = True
+            i += 2
+            continue
+
+        if char == "/" and nxt == "*":
+            in_block_comment = True
+            i += 2
+            continue
+
+        if char == "'":
+            in_string = True
+            buffer.append(char)
+            i += 1
+            continue
+
+        if char == ";":
+            statement = "".join(buffer).strip()
+            if statement:
+                statements.append(statement)
+            buffer = []
+            i += 1
+            continue
+
+        buffer.append(char)
+        i += 1
+
+    trailing = "".join(buffer).strip()
+    if trailing:
+        statements.append(trailing)
+
+    return statements
+
+
 async def provision_tenant_schema(db: AsyncSession, schema_name: str):
     """
     Runs the tenant_schema.sql DDL inside the given schema.
@@ -25,14 +109,17 @@ async def provision_tenant_schema(db: AsyncSession, schema_name: str):
         with open(sql_file_path, "r") as file:
             schema_sql = file.read()
 
-        # Route this connection to the new tenant schema
+        # Route this connection to the new tenant schema.
+        # This cannot be SET LOCAL: the caller continues in the same transaction
+        # to UPDATE tenants, which lives in public. The reset is therefore done
+        # explicitly in the finally block below so it happens even on failure -
+        # otherwise the pooled connection keeps pointing at the tenant schema.
         await db.execute(text(f"SET search_path TO {schema_name}"))
 
-        # asyncpg's prepared-statement protocol only allows a single command per
-        # execute(), so the multi-statement DDL script must be split and run
-        # statement-by-statement rather than as one text() call.
-        statements = [stmt.strip() for stmt in schema_sql.split(";") if stmt.strip()]
-        for statement in statements:
+        # SQLAlchemy's asyncpg dialect sends text() through the extended/prepared
+        # protocol, which rejects more than one command per statement, so the
+        # script has to be executed statement by statement.
+        for statement in split_sql_statements(schema_sql):
             await db.execute(text(statement))
 
         # Create migration tracking table and record the initial blueprint
@@ -49,12 +136,18 @@ async def provision_tenant_schema(db: AsyncSession, schema_name: str):
         )
         print(f"[Schema] Successfully provisioned tables for schema: {schema_name}")
 
-        # Reset search path back to public for safety
-        await db.execute(text("SET search_path TO public"))
-
     except Exception as e:
         print(f"[Schema Error] Failed to provision schema {schema_name}: {e}")
         raise
+
+    finally:
+        # Always restore the default search path. Without this a failed
+        # provision would return a connection to the pool still pointing at the
+        # tenant schema, breaking every later public-schema query on it.
+        try:
+            await db.execute(text('SET search_path TO "$user", public'))
+        except Exception as reset_error:  # pragma: no cover - best effort
+            print(f"[Schema Warning] Could not reset search_path: {reset_error}")
 
 
 async def activate_tenant_and_create_schema(

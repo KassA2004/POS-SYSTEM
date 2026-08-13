@@ -112,13 +112,18 @@ async def authenticate_user_service(
             detail="Payment not completed. Please finish checkout to activate your account.",
         )
 
+    # CloudRole subclasses (str, Enum), so str() yields "CloudRole.TENANT_OWNER"
+    # rather than "TENANT_OWNER". require_schema_owner compares against the bare
+    # value, so the enum's .value is what must go into the token.
+    role_value = row.role.value if hasattr(row.role, "value") else str(row.role)
+
     token_data = {
         "sub": str(row.user_id),
         "user_id": row.user_id,
         "email": row.email,
         "tenant_id": row.tenant_id,
         "schema_name": row.schema_name,
-        "role": str(row.role),
+        "role": role_value,
     }
 
     access_token = create_access_token(data=token_data)

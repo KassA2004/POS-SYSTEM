@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, status
+from typing import List, Optional
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.cloud.auth.dependencies import require_schema_owner, get_scoped_db
 from app.models.branch_employee_schemas import (
@@ -8,12 +9,27 @@ from app.models.branch_employee_schemas import (
     BranchEmployeeDeleteResponse,
 )
 from app.services.branch_employee_service import (
+    list_branch_employees_service,
     assign_employee_to_branch_service,
     update_branch_employee_service,
     delete_branch_employee_service,
 )
 
 router = APIRouter(tags=["Cloud Branch Employee Mapping"])
+
+
+@router.get("/branch-employees", response_model=List[BranchEmployeeResponse])
+async def list_branch_employee_assignments(
+    employee_id: Optional[int] = Query(None, description="Filter by employee"),
+    branch_id: Optional[int] = Query(None, description="Filter by branch"),
+    include_removed: bool = Query(False, description="Include soft-removed assignments"),
+    current_user: dict = Depends(require_schema_owner),
+    db: AsyncSession = Depends(get_scoped_db),
+):
+    """
+    Lists employee-to-branch assignments with resolved employee, branch and role names.
+    """
+    return await list_branch_employees_service(db, employee_id, branch_id, include_removed)
 
 
 @router.post("/branches/{branch_id}/assign", response_model=BranchEmployeeResponse, status_code=status.HTTP_201_CREATED)

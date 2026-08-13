@@ -1,47 +1,51 @@
+import { RotateCw } from 'lucide-react';
 import { AppShell } from '@/globalComponents/AppShell';
 import { Button } from '@/globalComponents/Button';
-import { Plus, RotateCw } from 'lucide-react';
+import { Alert } from '@/globalComponents/Alert';
 import { useDashboard } from '@/hooks/useDashboard';
 import { DashboardStatGrid } from './components/DashboardStatGrid';
-import { DashboardOverviewTable } from './components/DashboardOverviewTable';
+import { LowStockPanel } from './components/LowStockPanel';
+import { SalesByBranchPanel } from './components/SalesByBranchPanel';
 
 export function DashboardPage() {
-  const { user, loading, metrics, recentActivities } = useDashboard();
+  const { user, loading, refreshing, error, refresh, sales, counts, failed, lowStockItems } = useDashboard();
 
   return (
     <AppShell
-      title="Dashboard Overview"
+      title="Dashboard"
       actions={
-        <>
-          <Button variant="secondary" size="md" icon={<RotateCw size={16} strokeWidth={1.5} />}>
-            Refresh
-          </Button>
-          <Button variant="primary" size="md" icon={<Plus size={16} strokeWidth={1.5} />}>
-            New Branch
-          </Button>
-        </>
+        <Button
+          variant="secondary"
+          icon={<RotateCw size={16} strokeWidth={1.5} />}
+          onClick={refresh}
+          loading={refreshing}
+        >
+          Refresh
+        </Button>
       }
     >
       <div className="space-y-8">
-        <div className="bg-surface border border-border-default rounded-lg p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <h2 className="text-h2 font-bold text-ink-primary">
-              Active Tenant Schema: <span className="font-mono text-ink-secondary">{user?.schema_name || 'tenant_schema'}</span>
-            </h2>
-            <p className="text-body-sm text-ink-tertiary mt-1">
-              Multi-tenant B2B POS Cloud Dashboard • Enterprise Tenant Isolation Active
+        {error && <Alert variant="danger" title="Could not load the dashboard">{error}</Alert>}
+
+        {!error && failed.length > 0 && (
+          <Alert variant="warning" title="Some data could not be loaded">
+            The following did not respond: {failed.join(', ')}. Everything else on this page is current.
+          </Alert>
+        )}
+
+        <section className="space-y-4">
+          <div className="flex items-baseline justify-between gap-4">
+            <h2 className="text-h3 font-semibold text-ink-primary">Overview</h2>
+            <p className="text-caption text-ink-tertiary">
+              Workspace <span className="font-mono text-ink-secondary">{user?.schema_name}</span>
             </p>
           </div>
-        </div>
+          <DashboardStatGrid sales={sales} counts={counts} loading={loading} />
+        </section>
 
-        <div className="space-y-4">
-          <h3 className="text-h3 font-semibold text-ink-primary">Performance Metrics</h3>
-          <DashboardStatGrid metrics={metrics} loading={loading} />
-        </div>
-
-        <div className="space-y-4">
-          <h3 className="text-h3 font-semibold text-ink-primary">Recent Shift & System Audit Events</h3>
-          <DashboardOverviewTable activities={recentActivities} loading={loading} />
+        <div className="grid gap-6 lg:grid-cols-2">
+          <SalesByBranchPanel sales={sales} loading={loading} />
+          <LowStockPanel items={lowStockItems} loading={loading} />
         </div>
       </div>
     </AppShell>

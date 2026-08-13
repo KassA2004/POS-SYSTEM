@@ -55,6 +55,59 @@ async def get_branch_employee_by_id(
     )
 
 
+async def list_branch_employees_service(
+    db: AsyncSession,
+    employee_id: int | None = None,
+    branch_id: int | None = None,
+    include_removed: bool = False,
+) -> list[BranchEmployeeResponse]:
+    """
+    Lists branch_employee assignments with employee/branch/role names resolved.
+    Active-only by default - soft-removed rows are excluded unless asked for.
+    """
+    query = (
+        select(
+            BranchEmployee.id,
+            BranchEmployee.employee_id,
+            BranchEmployee.branch_id,
+            BranchEmployee.role_id,
+            BranchEmployee.assigned_at,
+            BranchEmployee.removed_at,
+            Employee.name.label("employee_name"),
+            Branch.name.label("branch_name"),
+            Role.name.label("role_name"),
+        )
+        .join(Employee, BranchEmployee.employee_id == Employee.id)
+        .join(Branch, BranchEmployee.branch_id == Branch.id)
+        .outerjoin(Role, BranchEmployee.role_id == Role.id)
+        .order_by(BranchEmployee.id.desc())
+    )
+
+    if employee_id is not None:
+        query = query.where(BranchEmployee.employee_id == employee_id)
+    if branch_id is not None:
+        query = query.where(BranchEmployee.branch_id == branch_id)
+    if not include_removed:
+        query = query.where(BranchEmployee.removed_at.is_(None))
+
+    result = await db.execute(query)
+
+    return [
+        BranchEmployeeResponse(
+            id=row.id,
+            employee_id=row.employee_id,
+            branch_id=row.branch_id,
+            role_id=row.role_id,
+            assigned_at=row.assigned_at,
+            removed_at=row.removed_at,
+            employee_name=row.employee_name,
+            branch_name=row.branch_name,
+            role_name=row.role_name,
+        )
+        for row in result.all()
+    ]
+
+
 async def assign_employee_to_branch_service(
     db: AsyncSession,
     branch_id: int,

@@ -10,6 +10,8 @@ import {
   Store,
   Users,
   Package,
+  Boxes,
+  ShieldCheck,
   Menu,
   X,
   CircleUser,
@@ -31,9 +33,16 @@ const navItems = [
     items: [
       { name: 'Branches', path: '/branches', icon: Store },
       { name: 'Employees', path: '/employees', icon: Users },
+      { name: 'Roles', path: '/roles', icon: ShieldCheck },
     ],
   },
-  { label: 'Catalogue', items: [{ name: 'Products', path: '/products', icon: Package }] },
+  {
+    label: 'Catalogue',
+    items: [
+      { name: 'Ingredients', path: '/ingredients', icon: Boxes },
+      { name: 'Products', path: '/products', icon: Package },
+    ],
+  },
 ];
 
 export function AppShell({ children, title, actions }: AppShellProps) {

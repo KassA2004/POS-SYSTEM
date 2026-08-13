@@ -1,30 +1,63 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { api, extractErrorMessage, registerUnauthorizedHandler } from '../services/api';
+import {
+  api,
+  extractErrorMessage,
+  registerUnauthorizedHandler,
+  getStoredToken,
+  setStoredToken,
+  clearStoredToken,
+} from '../services/api';
 import { AuthContext } from './AuthContextDef';
 import type {
   User,
+  TokenResponse,
   TenantRegistrationRequest,
   TenantRegistrationResponse,
   PaymentVerificationResponse,
 } from '../types/auth';
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(() => {
-    const storedUser = localStorage.getItem('cloud_pos_user');
-    return storedUser ? JSON.parse(storedUser) : null;
-  });
-  const [isLoading] = useState<boolean>(false);
+  const [user, setUser] = useState<User | null>(null);
+  // Starts true: we cannot know whether the stored token is still valid until
+  // /auth/me answers, and rendering a redirect before then would bounce a
+  // logged-in user to /login on every refresh.
+  const [isLoading, setIsLoading] = useState<boolean>(() => Boolean(getStoredToken()));
   const [error, setError] = useState<string | null>(null);
 
   const isAuthenticated = !!user;
 
   const clearAuth = useCallback(() => {
     setUser(null);
-    localStorage.removeItem('cloud_pos_user');
+    clearStoredToken();
   }, []);
 
   useEffect(() => {
     registerUnauthorizedHandler(clearAuth);
+  }, [clearAuth]);
+
+  // Session bootstrap: exchange the stored token for the authoritative user record.
+  useEffect(() => {
+    let cancelled = false;
+
+    const bootstrap = async () => {
+      if (!getStoredToken()) {
+        setIsLoading(false);
+        return;
+      }
+      try {
+        const response = await api.get<User>('/auth/me');
+        if (!cancelled) setUser(response.data);
+      } catch {
+        if (!cancelled) clearAuth();
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    };
+
+    void bootstrap();
+    return () => {
+      cancelled = true;
+    };
   }, [clearAuth]);
 
   const login = async (email: string, password: string): Promise<void> => {
@@ -34,23 +67,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       params.append('username', email);
       params.append('password', password);
 
-      await api.post('/auth/login', params, {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
+      const tokenResponse = await api.post<TokenResponse>('/auth/login', params, {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       });
 
-      const loggedUser: User = {
-        id: 1,
-        email,
-        role: 'TENANT_OWNER',
-        tenant_id: 1,
-        schema_name: 'tenant_schema',
-      };
+      setStoredToken(tokenResponse.data.access_token);
 
-      setUser(loggedUser);
-      localStorage.setItem('cloud_pos_user', JSON.stringify(loggedUser));
+      // Read the real identity back from the server rather than inventing one.
+      const me = await api.get<User>('/auth/me');
+      setUser(me.data);
     } catch (err: unknown) {
+      clearStoredToken();
       const msg = extractErrorMessage(err);
       setError(msg);
       throw new Error(msg, { cause: err });
@@ -86,7 +113,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       await api.post('/auth/logout');
     } catch {
-      // Ignore network errors during logout
+      // Stateless tokens: a failed call must never trap the user in a session.
     } finally {
       clearAuth();
     }

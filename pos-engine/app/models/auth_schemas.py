@@ -25,3 +25,13 @@ class TokenData(BaseModel):
     tenant_id: Optional[int] = None
     schema_name: Optional[str] = None
     role: Optional[str] = None
+
+
+class CurrentUserResponse(BaseModel):
+    """Session bootstrap payload returned by GET /auth/me."""
+    id: int
+    email: str
+    role: str
+    tenant_id: int
+    schema_name: str
+    tenant_name: Optional[str] = None

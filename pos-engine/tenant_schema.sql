@@ -158,3 +158,25 @@ CREATE TABLE audit_logs (
     new_value JSONB,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
+
+
+-- ============================================================================
+-- 6. SEED DATA: PERMISSION CATALOGUE
+-- Source of truth: docs/01-permission-matrix.md section 7.
+-- Roles are created by tenant admins at runtime and ship with none predefined,
+-- but the permission codes they attach to are system-defined and must exist
+-- from the moment the schema is provisioned.
+-- Roles reference these by id, so the catalogue must exist before any role
+-- can be created (RoleCreate requires at least one permission_id).
+-- ============================================================================
+INSERT INTO permissions (code, description) VALUES
+    ('order.preview',    'View order details without processing a transaction'),
+    ('order.void',       'Cancel active orders'),
+    ('order.refund',     'Reverse completed transactions'),
+    ('order.discount',   'Apply manual discounts to an order'),
+    ('sales.read_shift', 'View current shift metrics and summary'),
+    ('sales.read_history', 'View historical sales data'),
+    ('cash.open_drawer', 'Trigger the cash drawer without an associated sale'),
+    ('cash.pay_in',      'Record manual cash additions to the drawer'),
+    ('cash.pay_out',     'Record manual cash withdrawals from the drawer')
+ON CONFLICT (code) DO NOTHING;

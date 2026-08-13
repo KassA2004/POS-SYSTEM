@@ -70,7 +70,12 @@ async def get_scoped_db(
     """
     schema_name = current_user["schema_name"]
     async with AsyncSessionLocal() as session:
-        await session.execute(text(f"SET search_path TO {schema_name}"))
+        # SET LOCAL, not SET: a plain SET persists on the connection after it is
+        # returned to the pool, so the next request to reuse it - typically a
+        # public-schema query like /auth/login or /tenants - would fail with
+        # 'relation "tenants" does not exist'. SET LOCAL is scoped to this
+        # transaction and reverts automatically on commit or rollback.
+        await session.execute(text(f"SET LOCAL search_path TO {schema_name}"))
         try:
             yield session
             await session.commit()
